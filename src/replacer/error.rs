@@ -9,4 +9,6 @@ pub enum Error {
     BadPattern(String),
     #[error("IO error: {0}")]
     IoError(#[from] io::Error),
+    #[error("internal error: {0}")]
+    Internal(#[from] Box<Error>),
 }
