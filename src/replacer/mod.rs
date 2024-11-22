@@ -1,12 +1,13 @@
 mod error;
 
-use error::Result;
+use error::{Error, Result};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::{fs, iter};
+use tempfile;
 
 const SEARCH_MAX: usize = 4096;
 
@@ -16,36 +17,45 @@ pub fn replace(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
             let entry_path = entry?.path();
             replace(pattern, replacement, &entry_path)?;
         }
+        Ok(())
     } else {
-        let diffs = stream_diffs(pattern, replacement, Box::new(File::open(path)?));
+        let mut input = File::open(path)?;
+        let diffs = BufSearcher::new(pattern, replacement, &mut input);
+        let mut tempfile = tempfile::tempfile()?;
+        let mut original = File::open(path)?;
+        let mut replacer = Replacer::new(Box::new(diffs), &mut original, &mut tempfile);
+        loop {
+            match replacer.replace_next_diff() {
+                Err(Error::EndOfIteration) => return Ok(()),
+                Err(e) => return Err(e),
+                Ok(()) => (),
+            }
+        }
     }
-    todo!()
 }
 
-fn replace_diffs<'replacement, 'search>(
-    mut diffs: Box<dyn Iterator<Item = Result<Diff<'replacement>>> + 'search>,
-    original: Box<dyn Read>,
-    output: Box<dyn Write>,
-) -> Result<()> {
-    let mut replacer = Replacer::new(diffs, original, output);
-    loop {
-        replacer.replace_next_diff()?;
-    }
-    Ok(())
-}
-
-struct Replacer<'replacement, 'search> {
-    diffs: Box<dyn Iterator<Item = Result<Diff<'replacement>>> + 'search>,
-    original: Box<dyn Read>,
-    output: Box<dyn Write>,
+struct Replacer<'search, 'iterator, R, W>
+where
+    R: Read,
+    W: Write,
+    'search: 'iterator,
+{
+    diffs: Box<dyn Iterator<Item = Result<Diff<'search>>> + 'iterator>,
+    original: &'search mut R,
+    output: &'search mut W,
     pos: usize,
 }
 
-impl<'replacement, 'search> Replacer<'replacement, 'search> {
+impl<'search, 'iterator, R, W> Replacer<'search, 'iterator, R, W>
+where
+    R: Read,
+    W: Write,
+    'search: 'iterator,
+{
     fn new(
-        mut diffs: Box<dyn Iterator<Item = Result<Diff<'replacement>>> + 'search>,
-        original: Box<dyn Read>,
-        output: Box<dyn Write>,
+        diffs: Box<dyn Iterator<Item = Result<Diff<'search>>> + 'iterator>,
+        original: &'search mut R,
+        output: &'search mut W,
     ) -> Self {
         Self {
             diffs,
@@ -59,7 +69,7 @@ impl<'replacement, 'search> Replacer<'replacement, 'search> {
         match self.diffs.next() {
             None => {
                 self.copy_remaining()?;
-                Ok(())
+                Err(Error::EndOfIteration)
             }
             Some(Err(e)) => return Err(e),
             Some(Ok(diff)) => {
@@ -71,7 +81,7 @@ impl<'replacement, 'search> Replacer<'replacement, 'search> {
     }
 
     fn copy_remaining(self: &mut Self) -> Result<()> {
-        io::copy(self.original.as_mut(), self.output.as_mut())?;
+        io::copy(self.original, self.output)?;
         Ok(())
     }
 
@@ -99,43 +109,25 @@ struct Diff<'str> {
     add: &'str str,
 }
 
-fn stream_diffs<'search, 'pattern, 'replacement>(
-    pattern: &'pattern str,
-    replacement: &'replacement str,
-    stream: Box<dyn Read>,
-) -> Box<dyn Iterator<Item = Result<Diff<'replacement>>> + 'search>
+struct BufSearcher<'search, R>
 where
-    'search: 'pattern + 'replacement,
-    'pattern: 'search,
-    'replacement: 'search,
+    R: std::io::Read,
 {
-    let reader = Box::new(BufReader::new(stream));
-    let mut searcher = BufSearcher::new(pattern, replacement, reader);
-    let iterator = iter::from_fn(move || match searcher.next_diff() {
-        Ok(None) => None,
-        Ok(Some(diff)) => Some(Ok(diff)),
-        Err(e) => Some(Err(e)),
-    });
-    Box::new(iterator)
-}
-
-struct BufSearcher<'search> {
     pattern: &'search str,
     replacement: &'search str,
     pos: usize,
-    reader: Box<dyn std::io::Read>,
+    reader: &'search mut R,
     buf: [u8; SEARCH_MAX],
     read_head: usize,
     drop_head: usize,
     ready: VecDeque<Diff<'search>>,
 }
 
-impl<'search> BufSearcher<'search> {
-    fn new(
-        pattern: &'search str,
-        replacement: &'search str,
-        reader: Box<dyn std::io::Read>,
-    ) -> Self {
+impl<'search, R> BufSearcher<'search, R>
+where
+    R: std::io::Read,
+{
+    fn new(pattern: &'search str, replacement: &'search str, reader: &'search mut R) -> Self {
         Self {
             pattern,
             replacement,
@@ -207,6 +199,22 @@ impl<'search> BufSearcher<'search> {
             })
         } else {
             None
+        }
+    }
+}
+
+impl<'search, R> Iterator for BufSearcher<'search, R>
+where
+    R: Read,
+{
+    type Item = Result<Diff<'search>>;
+
+    fn next(self: &mut Self) -> Option<Result<Diff<'search>>> {
+        match self.next_diff() {
+            // transpose?
+            Ok(None) => None,
+            Ok(Some(diff)) => Some(Ok(diff)),
+            Err(e) => Some(Err(e)),
         }
     }
 }

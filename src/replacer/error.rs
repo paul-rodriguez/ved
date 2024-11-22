@@ -5,6 +5,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("end of iteration")]
+    EndOfIteration,
     #[error("bad pattern: {0}")]
     BadPattern(String),
     #[error("IO error: {0}")]
