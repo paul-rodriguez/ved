@@ -89,7 +89,7 @@ where
         // skip over the length of the pattern in the input
         let mut buf = vec![0; diff.remove];
         self.original.read_exact(buf.as_mut_slice())?;
-        self.output.write_all(diff.add.as_bytes());
+        self.output.write_all(diff.add.as_bytes())?;
         self.pos += diff.remove;
         Ok(())
     }
@@ -103,6 +103,7 @@ where
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 struct Diff<'str> {
     pos: usize,
     remove: usize,
@@ -191,7 +192,9 @@ where
     }
 
     fn match_buffer(self: &mut Self) -> Option<Diff<'search>> {
-        if &self.buf[self.drop_head..] == self.pattern.as_bytes() {
+        let slice_end = self.drop_head + self.pattern.len();
+        let slice = &self.buf[self.drop_head..slice_end];
+        if slice == self.pattern.as_bytes() {
             Some(Diff {
                 pos: self.pos + self.drop_head,
                 remove: self.pattern.len(),
@@ -216,5 +219,107 @@ where
             Ok(Some(diff)) => Some(Ok(diff)),
             Err(e) => Some(Err(e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use io::Cursor;
+    use std::fs;
+    use stringreader::StringReader;
+
+    #[test]
+    fn test_replace_file_does_not_exist() {
+        let dir = temp_dir();
+        let path = dir.path().join("file");
+        let result = replace("abba", "toto", &path);
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            Error::IoError(_) => {}
+            _ => {
+                assert!(false)
+            }
+        }
+    }
+
+    #[test]
+    fn test_replace_file_empty() {
+        let dir = temp_dir();
+        let path = dir.path().join("file");
+        let file = File::create_new(&path);
+        assert!(file.is_ok());
+        let result = replace("abba", "toto", &path);
+        assert!(result.is_ok());
+
+        let content = file_content(path);
+        assert_eq!(content, "")
+    }
+
+    #[test]
+    fn test_replace_basic() {
+        let dir = temp_dir();
+        let path = dir.path().join("file");
+        write_file(&path, "abba");
+        let result = replace("abba", "toto", &path);
+        assert!(result.is_ok());
+
+        let content = file_content(path);
+        assert_eq!(content, "toto")
+    }
+
+    #[test]
+    fn test_buf_searcher_basic() {
+        let mut input = StringReader::new("abba");
+        let mut buf_searcher = BufSearcher::new("abba", "toto", &mut input);
+        let option = buf_searcher.next();
+        assert!(option.is_some());
+        let result = option.unwrap();
+        assert!(result.is_ok());
+        let diff = result.unwrap();
+        let expected = Diff {
+            pos: 0,
+            remove: 4,
+            add: "toto",
+        };
+        assert_eq!(diff, expected);
+    }
+
+    #[test]
+    fn test_replacer_basic() {
+        let mut original = StringReader::new("abba");
+        let mut output = Cursor::new(Vec::new());
+        let diff = Diff {
+            pos: 0,
+            remove: 4,
+            add: "toto",
+        };
+        let diffs = iter::once(Ok(diff));
+        {
+            let mut replacer = Replacer::new(Box::new(diffs), &mut original, &mut output);
+            let result = replacer.replace_next_diff();
+            assert!(result.is_ok());
+        }
+        let result = String::from_utf8(output.into_inner());
+        assert!(result.is_ok());
+        let content = result.unwrap();
+        assert_eq!(content, "toto");
+    }
+
+    fn temp_dir() -> tempfile::TempDir {
+        let result = tempfile::tempdir();
+        assert!(result.is_ok());
+        result.unwrap()
+    }
+
+    fn file_content<P: AsRef<Path>>(path: P) -> String {
+        let result = fs::read_to_string(path);
+        assert!(result.is_ok());
+        result.unwrap()
+    }
+
+    fn write_file<P: AsRef<Path>>(path: P, content: &str) {
+        let result = fs::write(path, content);
+        assert!(result.is_ok());
     }
 }
