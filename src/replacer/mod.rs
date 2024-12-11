@@ -11,6 +11,11 @@ use tempfile;
 
 const SEARCH_MAX: usize = 4096;
 
+// Search and replace a pattern in a file or recursively in a directory.
+//
+// For each file that much change, the result of the replacement is first
+// written into a temporary file and the original file is replaced by the
+// temporary file through a rename.
 pub fn replace(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
     if path.is_dir() {
         for entry in fs::read_dir(path)? {
@@ -21,15 +26,22 @@ pub fn replace(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
     } else {
         let mut input = File::open(path)?;
         let diffs = BufSearcher::new(pattern, replacement, &mut input);
-        let mut tempfile = tempfile::tempfile()?;
+        let mut temp_file = tempfile::NamedTempFile::new()?;
         let mut original = File::open(path)?;
-        let mut replacer = Replacer::new(Box::new(diffs), &mut original, &mut tempfile);
-        loop {
-            match replacer.replace_next_diff() {
-                Err(Error::EndOfIteration) => return Ok(()),
-                Err(e) => return Err(e),
-                Ok(()) => (),
+        {
+            let mut replacer = Replacer::new(Box::new(diffs), &mut original, &mut temp_file);
+            loop {
+                match replacer.replace_next_diff() {
+                    Err(Error::EndOfIteration) => break,
+                    Err(e) => return Err(e),
+                    Ok(()) => (),
+                }
             }
+        }
+        let temp_path = temp_file.into_temp_path();
+        match fs::rename(temp_path, path) {
+            Err(e) => Err(Error::IoError(e)),
+            Ok(()) => Ok(()),
         }
     }
 }
@@ -152,8 +164,7 @@ where
         loop {
             self.fill_buffer()?;
             let remaining_bytes = self.read_head - self.drop_head;
-            let missing_bytes = self.pattern.len() - remaining_bytes;
-            if missing_bytes > 0 {
+            if self.pattern.len() > remaining_bytes {
                 // End of file
                 break Ok(None);
             }
@@ -171,8 +182,8 @@ where
 
     fn fill_buffer(self: &mut Self) -> Result<()> {
         let remaining_bytes = self.read_head - self.drop_head;
-        let missing_bytes = self.pattern.len() - remaining_bytes;
-        if missing_bytes > 0 {
+        if self.pattern.len() > remaining_bytes {
+            let missing_bytes = self.pattern.len() - remaining_bytes;
             if self.read_head + missing_bytes >= SEARCH_MAX {
                 self.compress_buffer();
             }
@@ -226,6 +237,7 @@ where
 mod tests {
     use super::*;
     use io::Cursor;
+    use itertools;
     use std::fs;
     use stringreader::StringReader;
 
@@ -269,6 +281,32 @@ mod tests {
     }
 
     #[test]
+    fn test_replace_two_hits() {
+        let dir = temp_dir();
+        let path = dir.path().join("file");
+        write_file(&path, "abba has sold more records than abba");
+        let result = replace("abba", "toto", &path);
+        assert!(result.is_ok());
+
+        let content = file_content(path);
+        assert_eq!(content, "toto has sold more records than toto")
+    }
+
+    #[test]
+    fn test_replace_max_pattern_len() {
+        let dir = temp_dir();
+        let path = dir.path().join("file");
+        let pattern: String = iter::repeat("X").take(SEARCH_MAX).collect();
+        let orig_content = String::new() + &pattern + " and " + &pattern;
+        write_file(&path, &orig_content);
+        let result = replace(&pattern, "toto", &path);
+        assert!(result.is_ok());
+
+        let content = file_content(path);
+        assert_eq!(content, "toto and toto")
+    }
+
+    #[test]
     fn test_buf_searcher_basic() {
         let mut input = StringReader::new("abba");
         let mut buf_searcher = BufSearcher::new("abba", "toto", &mut input);
@@ -283,6 +321,26 @@ mod tests {
             add: "toto",
         };
         assert_eq!(diff, expected);
+    }
+
+    #[test]
+    fn test_buf_searcher_two_hits() {
+        let mut input = StringReader::new("abba has sold abba records");
+        let buf_searcher = BufSearcher::new("abba", "toto", &mut input);
+        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
+        let expected = vec![
+            Diff {
+                pos: 0,
+                remove: 4,
+                add: "toto",
+            },
+            Diff {
+                pos: 14,
+                remove: 4,
+                add: "toto",
+            },
+        ];
+        assert_eq!(diffs, expected);
     }
 
     #[test]
