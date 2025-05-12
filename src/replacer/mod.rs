@@ -187,7 +187,7 @@ where
             if self.read_head + missing_bytes >= SEARCH_MAX {
                 self.compress_buffer();
             }
-            let nb_read = self.reader.read(&mut self.buf[self.drop_head..])?;
+            let nb_read = self.reader.read(&mut self.buf[self.read_head..])?;
             self.read_head += nb_read;
         }
         Ok(())
