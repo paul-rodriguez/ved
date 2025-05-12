@@ -13,7 +13,7 @@ const SEARCH_MAX: usize = 4096;
 
 // Search and replace a pattern in a file or recursively in a directory.
 //
-// For each file that much change, the result of the replacement is first
+// For each file that must change, the result of the replacement is first
 // written into a temporary file and the original file is replaced by the
 // temporary file through a rename.
 pub fn replace(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
@@ -362,6 +362,18 @@ mod tests {
         assert!(result.is_ok());
         let content = result.unwrap();
         assert_eq!(content, "toto");
+    }
+
+    #[test]
+    fn test_replace_in_dir() {
+        let dir = temp_dir();
+        let path = dir.path().join("file");
+        write_file(&path, "abba");
+        let result = replace("abba", "toto", dir.path());
+        assert!(result.is_ok());
+
+        let content = file_content(path);
+        assert_eq!(content, "toto")
     }
 
     fn temp_dir() -> tempfile::TempDir {
