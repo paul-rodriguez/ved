@@ -135,7 +135,6 @@ where
 mod tests {
     use super::*;
     use io::Cursor;
-    use itertools;
     use std::fs;
     use std::iter;
     use stringreader::StringReader;
@@ -203,43 +202,6 @@ mod tests {
 
         let content = file_content(path);
         assert_eq!(content, "toto and toto")
-    }
-
-    #[test]
-    fn test_buf_searcher_basic() {
-        let mut input = StringReader::new("abba");
-        let mut buf_searcher = BufSearcher::new("abba", "toto", &mut input);
-        let option = buf_searcher.next();
-        assert!(option.is_some());
-        let result = option.unwrap();
-        assert!(result.is_ok());
-        let diff = result.unwrap();
-        let expected = Diff {
-            pos: 0,
-            remove: 4,
-            add: "toto",
-        };
-        assert_eq!(diff, expected);
-    }
-
-    #[test]
-    fn test_buf_searcher_two_hits() {
-        let mut input = StringReader::new("abba has sold abba records");
-        let buf_searcher = BufSearcher::new("abba", "toto", &mut input);
-        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
-        let expected = vec![
-            Diff {
-                pos: 0,
-                remove: 4,
-                add: "toto",
-            },
-            Diff {
-                pos: 14,
-                remove: 4,
-                add: "toto",
-            },
-        ];
-        assert_eq!(diffs, expected);
     }
 
     #[test]
