@@ -9,6 +9,8 @@ pub enum Error {
     EndOfIteration,
     #[error("bad pattern: {0}")]
     BadPattern(String),
+    #[error("cannot handle path: {0}")]
+    PathError(String),
     #[error("IO error: {0}")]
     IoError(#[from] io::Error),
     #[error("internal error: {0}")]
