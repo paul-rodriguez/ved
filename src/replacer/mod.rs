@@ -1,5 +1,6 @@
 mod bufsearcher;
 mod diff;
+mod diffheap;
 mod error;
 
 use bufsearcher::BufSearcher;
@@ -26,7 +27,8 @@ pub fn replace(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
         Ok(())
     } else {
         let mut input = File::open(path)?;
-        let diffs = BufSearcher::new(pattern, replacement, &mut input);
+        let patterns = vec![pattern];
+        let diffs = BufSearcher::new(&patterns, replacement, &mut input);
         let temp_path = temporary_path(path)?;
         let mut temp_file = File::create_new(&temp_path)?;
         let mut original = File::open(path)?;
