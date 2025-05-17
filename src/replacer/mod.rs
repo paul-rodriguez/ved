@@ -28,7 +28,8 @@ pub fn replace(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
     } else {
         let mut input = File::open(path)?;
         let patterns = vec![pattern];
-        let diffs = BufSearcher::new(&patterns, replacement, &mut input);
+        let replacements = vec![replacement];
+        let diffs = BufSearcher::new(&patterns, &replacements, &mut input);
         let temp_path = temporary_path(path)?;
         let mut temp_file = File::create_new(&temp_path)?;
         let mut original = File::open(path)?;

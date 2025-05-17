@@ -2,9 +2,11 @@ use super::diffheap::DiffHeap;
 use crate::replacer::diff::Diff;
 use crate::replacer::error::Result;
 use std::io::Read;
+use std::iter::Zip;
+use std::slice;
 
 /// The maximum number of bytes between the start and the end of match.
-pub const SEARCH_MAX: usize = 4096;
+pub const SEARCH_MAX: usize = 4096 * 1024;
 
 /// Block patterns are guaranteed to match if they exist within the start of a line and this column.
 ///
@@ -17,10 +19,10 @@ where
     R: std::io::Read,
 {
     patterns: &'search Vec<&'search str>,
-    replacement: &'search str,
+    replacements: &'search Vec<&'search str>,
     pos: usize,
     reader: &'search mut R,
-    buf: [u8; SEARCH_MAX],
+    buf: Box<[u8; SEARCH_MAX]>,
     read_head: usize,
     drop_head: usize,
     last_line_start: usize,
@@ -33,15 +35,15 @@ where
 {
     pub fn new(
         patterns: &'search Vec<&'search str>,
-        replacement: &'search str,
+        replacements: &'search Vec<&'search str>,
         reader: &'search mut R,
     ) -> Self {
         Self {
             patterns,
-            replacement,
+            replacements,
             pos: 0,
             reader,
-            buf: [0; SEARCH_MAX],
+            buf: vec![0; SEARCH_MAX].into_boxed_slice().try_into().unwrap(),
             read_head: 0,
             drop_head: 0,
             last_line_start: 0,
@@ -136,20 +138,28 @@ where
     /// TODO this really needs a refactor
     fn match_buffer(self: &mut Self) -> Option<DiffHeap<'search>> {
         let mut buf_offset = 0;
-        let first_match = self.match_one_pattern(buf_offset, self.patterns[0], self.replacement)?;
+        let first_match =
+            self.match_one_pattern(buf_offset, self.patterns[0], self.replacements[0])?;
         let mut previous_match_len = first_match.diff.remove;
         let line_offset = first_match.line_offset;
         let mut result = DiffHeap::new();
         result.push(first_match.diff);
-        for pattern in self.patterns.iter().skip(1) {
+
+        for (pattern, replacement) in self.get_replacement_pairs().skip(1) {
             buf_offset += previous_match_len
                 + self.next_line_offset(self.drop_head + previous_match_len)?
                 + line_offset;
-            let mat = self.match_one_pattern(buf_offset, pattern, self.replacement)?;
+            let mat = self.match_one_pattern(buf_offset, pattern, replacement)?;
             previous_match_len = mat.diff.remove;
             result.push(mat.diff);
         }
         Some(result)
+    }
+
+    fn get_replacement_pairs(
+        &self,
+    ) -> Zip<slice::Iter<'search, &'search str>, slice::Iter<'search, &'search str>> {
+        self.patterns.into_iter().zip(self.replacements)
     }
 
     /// Returns the number of bytes between an offset and the next newline.
@@ -222,7 +232,8 @@ mod tests {
     fn test_basic() {
         let mut input = StringReader::new("abba");
         let patterns = vec!["abba"];
-        let mut buf_searcher = BufSearcher::new(&patterns, "toto", &mut input);
+        let replacements = vec!["toto"];
+        let mut buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
         let option = buf_searcher.next();
         assert!(option.is_some());
         let result = option.unwrap();
@@ -240,7 +251,8 @@ mod tests {
     fn test_two_hits() {
         let mut input = StringReader::new("abba has sold abba records");
         let patterns = vec!["abba"];
-        let buf_searcher = BufSearcher::new(&patterns, "toto", &mut input);
+        let replacements = vec!["toto"];
+        let buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
         let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
         let expected = vec![
             Diff {
@@ -261,7 +273,8 @@ mod tests {
     fn test_block_basic() {
         let mut input = StringReader::new("abba\ntoto");
         let patterns = vec!["abba", "toto"];
-        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let replacements = vec!["queen", "queen"];
+        let buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
         let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
         let expected = vec![
             Diff {
@@ -282,7 +295,8 @@ mod tests {
     fn test_block_with_line_offset() {
         let mut input = StringReader::new("_abba\n_toto");
         let patterns = vec!["abba", "toto"];
-        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let replacements = vec!["queen", "queen"];
+        let buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
         let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
         let expected = vec![
             Diff {
@@ -303,7 +317,8 @@ mod tests {
     fn test_block_wrong_line_offset() {
         let mut input = StringReader::new("_abba\n__toto");
         let patterns = vec!["abba", "toto"];
-        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let replacements = vec!["queen", "queen"];
+        let buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
         let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
         let expected = vec![];
         assert_eq!(diffs, expected);
@@ -313,7 +328,8 @@ mod tests {
     fn test_block_different_lengths() {
         let mut input = StringReader::new("_who\n_abba");
         let patterns = vec!["who", "abba"];
-        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let replacements = vec!["queen", "queen"];
+        let buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
         let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
         let expected = vec![
             Diff {
@@ -331,10 +347,33 @@ mod tests {
     }
 
     #[test]
+    fn test_block_different_replacements() {
+        let mut input = StringReader::new("_who\n_abba");
+        let patterns = vec!["who", "abba"];
+        let replacements = vec!["queen", "beatles"];
+        let buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
+        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
+        let expected = vec![
+            Diff {
+                pos: 1,
+                remove: 3,
+                add: "queen",
+            },
+            Diff {
+                pos: 6,
+                remove: 4,
+                add: "beatles",
+            },
+        ];
+        assert_eq!(diffs, expected);
+    }
+
+    #[test]
     fn test_block_two_matches() {
         let mut input = StringReader::new("_who=+who\n_abba+abba");
         let patterns = vec!["who", "abba"];
-        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let replacements = vec!["queen", "queen"];
+        let buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
         let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
         let expected = vec![
             Diff {
@@ -365,7 +404,8 @@ mod tests {
     fn test_block_two_mixed_matches() {
         let mut input = StringReader::new("_who\n_abba+who\n_====+abba");
         let patterns = vec!["who", "abba"];
-        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let replacements = vec!["queen", "queen"];
+        let buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
         let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
         let expected = vec![
             Diff {
@@ -399,7 +439,8 @@ mod tests {
         let orig_content = String::new() + &garbage + "who\n" + &garbage + "abba";
         let mut input = StringReader::new(&orig_content);
         let patterns = vec!["who", "abba"];
-        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let replacements = vec!["queen", "queen"];
+        let buf_searcher = BufSearcher::new(&patterns, &replacements, &mut input);
         let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
         let expected = vec![
             Diff {
