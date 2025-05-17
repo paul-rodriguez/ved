@@ -152,10 +152,14 @@ where
         Some(result)
     }
 
+    /// Returns the number of bytes between an offset and the next newline.
+    ///
+    /// What's returned is the offset of the character immediately following the newline character,
+    /// not the newline character itself.
     fn next_line_offset(self: &Self, start_offset: usize) -> Option<usize> {
         for i in start_offset..SEARCH_MAX {
             if self.buf[i] == '\n' as u8 {
-                return Some(i - start_offset);
+                return Some(i - start_offset + 1);
             }
         }
         None
@@ -214,7 +218,7 @@ mod tests {
     use stringreader::StringReader;
 
     #[test]
-    fn test_buf_searcher_basic() {
+    fn test_basic() {
         let mut input = StringReader::new("abba");
         let patterns = vec!["abba"];
         let mut buf_searcher = BufSearcher::new(&patterns, "toto", &mut input);
@@ -232,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn test_buf_searcher_two_hits() {
+    fn test_two_hits() {
         let mut input = StringReader::new("abba has sold abba records");
         let patterns = vec!["abba"];
         let buf_searcher = BufSearcher::new(&patterns, "toto", &mut input);
@@ -247,6 +251,27 @@ mod tests {
                 pos: 14,
                 remove: 4,
                 add: "toto",
+            },
+        ];
+        assert_eq!(diffs, expected);
+    }
+
+    #[test]
+    fn test_block_basic() {
+        let mut input = StringReader::new("abba\ntoto");
+        let patterns = vec!["abba", "toto"];
+        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
+        let expected = vec![
+            Diff {
+                pos: 0,
+                remove: 4,
+                add: "queen",
+            },
+            Diff {
+                pos: 5,
+                remove: 4,
+                add: "queen",
             },
         ];
         assert_eq!(diffs, expected);

@@ -14,7 +14,7 @@ pub struct Diff<'str> {
 /*
 impl<'str> Ord for Diff<'str> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.
+        self.pos.cmp(other.pos)
     }
 }
 
