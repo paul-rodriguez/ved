@@ -6,13 +6,21 @@ pub struct DiffHeap<'str> {
 }
 
 impl<'str> DiffHeap<'str> {
-    pub fn new(diff: Diff<'str>) -> Self {
+    pub fn new() -> Self {
         Self {
-            heap: BinaryHeap::from(vec![diff]),
+            heap: BinaryHeap::new(),
         }
     }
 
     pub fn push(&mut self, diff: Diff<'str>) {
         self.heap.push(diff)
+    }
+
+    pub fn merge_with(&mut self, mut other: Self) {
+        self.heap.append(&mut other.heap)
+    }
+
+    pub fn pop(&mut self) -> Option<Diff<'str>> {
+        self.heap.pop()
     }
 }

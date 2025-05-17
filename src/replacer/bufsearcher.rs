@@ -1,7 +1,6 @@
 use super::diffheap::DiffHeap;
 use crate::replacer::diff::Diff;
 use crate::replacer::error::Result;
-use std::collections::VecDeque;
 use std::io::Read;
 
 /// The maximum number of bytes between the start and the end of match.
@@ -22,7 +21,7 @@ where
     read_head: usize,
     drop_head: usize,
     last_line_start: usize,
-    ready: VecDeque<Diff<'search>>,
+    ready: DiffHeap<'search>,
 }
 
 impl<'search, R> BufSearcher<'search, R>
@@ -43,18 +42,28 @@ where
             read_head: 0,
             drop_head: 0,
             last_line_start: 0,
-            ready: VecDeque::new(),
+            ready: DiffHeap::new(),
         }
     }
 
     fn next_diff(self: &mut Self) -> Result<Option<Diff<'search>>> {
-        match self.ready.pop_front() {
+        match self.ready.pop() {
             Some(d) => Ok(Some(d)),
-            None => self.push_diffs(),
+            None => {
+                let diffs = match self.read_diffs()? {
+                    None => return Ok(None),
+                    Some(diff_heap) => diff_heap,
+                };
+                self.ready.merge_with(diffs);
+                match self.ready.pop() {
+                    None => panic!("Internal error: there should be a diff in the queue, we just added at least one"),
+                    Some(d) => Ok(Some(d)),
+                }
+            }
         }
     }
 
-    fn push_diffs(self: &mut Self) -> Result<Option<Diff<'search>>> {
+    fn read_diffs(self: &mut Self) -> Result<Option<DiffHeap<'search>>> {
         loop {
             self.fill_buffer()?;
             let remaining_bytes = self.read_head - self.drop_head;
@@ -66,10 +75,9 @@ where
                 None => {
                     self.drop(1);
                 }
-                Some(diffs) => {
+                Some(diff_heap) => {
                     self.drop(self.patterns[0].len());
-                    // TODO
-                    break Ok(Some(diff));
+                    break Ok(Some(diff_heap));
                 }
             };
         }
@@ -125,18 +133,20 @@ where
         self.read_head = remaining_bytes;
     }
 
+    /// TODO this really needs a refactor
     fn match_buffer(self: &mut Self) -> Option<DiffHeap<'search>> {
-        let first_match = self.match_one_pattern(0, self.patterns[0], self.replacement)?;
+        let mut buf_offset = 0;
+        let first_match = self.match_one_pattern(buf_offset, self.patterns[0], self.replacement)?;
+        let mut previous_match_len = first_match.diff.remove;
         let line_offset = first_match.line_offset;
-        let mut buf_offset = first_match.diff.remove
-            + self.next_line_offset(self.drop_head + first_match.diff.remove)?
-            + line_offset;
-        let mut result = DiffHeap::new(first_match.diff);
+        let mut result = DiffHeap::new();
+        result.push(first_match.diff);
         for pattern in self.patterns.iter().skip(1) {
-            let mat = self.match_one_pattern(buf_offset, pattern, self.replacement)?;
-            buf_offset += mat.diff.remove
-                + self.next_line_offset(self.drop_head + mat.diff.remove)?
+            buf_offset += previous_match_len
+                + self.next_line_offset(self.drop_head + previous_match_len)?
                 + line_offset;
+            let mat = self.match_one_pattern(buf_offset, pattern, self.replacement)?;
+            previous_match_len = mat.diff.remove;
             result.push(mat.diff);
         }
         Some(result)
