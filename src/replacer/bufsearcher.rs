@@ -47,19 +47,16 @@ where
     }
 
     fn next_diff(self: &mut Self) -> Result<Option<Diff<'search>>> {
+        let diffs = match self.read_diffs()? {
+            None => return Ok(self.ready.pop()),
+            Some(diff_heap) => diff_heap,
+        };
+        self.ready.merge_with(diffs);
         match self.ready.pop() {
+            None => panic!(
+                "Internal error: there should be a diff in the queue, we just added at least one"
+            ),
             Some(d) => Ok(Some(d)),
-            None => {
-                let diffs = match self.read_diffs()? {
-                    None => return Ok(None),
-                    Some(diff_heap) => diff_heap,
-                };
-                self.ready.merge_with(diffs);
-                match self.ready.pop() {
-                    None => panic!("Internal error: there should be a diff in the queue, we just added at least one"),
-                    Some(d) => Ok(Some(d)),
-                }
-            }
         }
     }
 
