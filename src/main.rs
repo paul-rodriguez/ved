@@ -19,7 +19,7 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let result = replacer::replace(&args.search, &args.replace, &Path::new(&args.path));
+    let result = replacer::replace_single(&args.search, &args.replace, &Path::new(&args.path));
     match result {
         Ok(_) => {}
         Err(e) => {

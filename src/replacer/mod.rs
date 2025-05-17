@@ -18,17 +18,19 @@ use std::path::{Path, PathBuf};
 // For each file that must change, the result of the replacement is first
 // written into a temporary file and the original file is replaced by the
 // temporary file through a rename.
-pub fn replace(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
+pub fn replace<'search>(
+    patterns: &'search Vec<&'search str>,
+    replacements: &'search Vec<&'search str>,
+    path: &Path,
+) -> Result<()> {
     if path.is_dir() {
         for entry in fs::read_dir(path)? {
             let entry_path = entry?.path();
-            replace(pattern, replacement, &entry_path)?;
+            replace(patterns, replacements, &entry_path)?;
         }
         Ok(())
     } else {
         let mut input = File::open(path)?;
-        let patterns = vec![pattern];
-        let replacements = vec![replacement];
         let diffs = BufSearcher::new(&patterns, &replacements, &mut input);
         let temp_path = temporary_path(path)?;
         let mut temp_file = File::create_new(&temp_path)?;
@@ -48,6 +50,12 @@ pub fn replace(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
             Ok(()) => Ok(()),
         }
     }
+}
+
+pub fn replace_single(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
+    let patterns = vec![pattern];
+    let replacements = vec![replacement];
+    replace(&patterns, &replacements, path)
 }
 
 fn temporary_path(original_path: &Path) -> Result<PathBuf> {
@@ -146,7 +154,7 @@ mod tests {
     fn test_replace_file_does_not_exist() {
         let dir = temp_dir();
         let path = dir.path().join("file");
-        let result = replace("abba", "toto", &path);
+        let result = replace_single("abba", "toto", &path);
         assert!(result.is_err());
         match result.unwrap_err() {
             Error::IoError(_) => {}
@@ -162,7 +170,7 @@ mod tests {
         let path = dir.path().join("file");
         let file = File::create_new(&path);
         assert!(file.is_ok());
-        let result = replace("abba", "toto", &path);
+        let result = replace_single("abba", "toto", &path);
         assert!(result.is_ok());
 
         let content = file_content(path);
@@ -174,7 +182,7 @@ mod tests {
         let dir = temp_dir();
         let path = dir.path().join("file");
         write_file(&path, "abba");
-        let result = replace("abba", "toto", &path);
+        let result = replace_single("abba", "toto", &path);
         assert!(result.is_ok());
 
         let content = file_content(path);
@@ -186,7 +194,7 @@ mod tests {
         let dir = temp_dir();
         let path = dir.path().join("file");
         write_file(&path, "abba has sold more records than abba");
-        let result = replace("abba", "toto", &path);
+        let result = replace_single("abba", "toto", &path);
         assert!(result.is_ok());
 
         let content = file_content(path);
@@ -200,7 +208,7 @@ mod tests {
         let pattern: String = iter::repeat("X").take(bufsearcher::SEARCH_MAX).collect();
         let orig_content = String::new() + &pattern + " and " + &pattern;
         write_file(&path, &orig_content);
-        let result = replace(&pattern, "toto", &path);
+        let result = replace_single(&pattern, "toto", &path);
         assert!(result.is_ok());
 
         let content = file_content(path);
@@ -233,7 +241,7 @@ mod tests {
         let dir = temp_dir();
         let path = dir.path().join("file");
         write_file(&path, "abba");
-        let result = replace("abba", "toto", dir.path());
+        let result = replace_single("abba", "toto", dir.path());
         assert!(result.is_ok());
 
         let content = file_content(path);
