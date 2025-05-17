@@ -356,4 +356,35 @@ mod tests {
         ];
         assert_eq!(diffs, expected);
     }
+
+    #[test]
+    fn test_block_two_mixed_matches() {
+        let mut input = StringReader::new("_who\n_abba+who\n_====+abba");
+        let patterns = vec!["who", "abba"];
+        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
+        let expected = vec![
+            Diff {
+                pos: 1,
+                remove: 3,
+                add: "queen",
+            },
+            Diff {
+                pos: 6,
+                remove: 4,
+                add: "queen",
+            },
+            Diff {
+                pos: 11,
+                remove: 3,
+                add: "queen",
+            },
+            Diff {
+                pos: 21,
+                remove: 4,
+                add: "queen",
+            },
+        ];
+        assert_eq!(diffs, expected);
+    }
 }
