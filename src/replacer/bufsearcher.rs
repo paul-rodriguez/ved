@@ -276,4 +276,87 @@ mod tests {
         ];
         assert_eq!(diffs, expected);
     }
+
+    #[test]
+    fn test_block_with_line_offset() {
+        let mut input = StringReader::new("_abba\n_toto");
+        let patterns = vec!["abba", "toto"];
+        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
+        let expected = vec![
+            Diff {
+                pos: 1,
+                remove: 4,
+                add: "queen",
+            },
+            Diff {
+                pos: 7,
+                remove: 4,
+                add: "queen",
+            },
+        ];
+        assert_eq!(diffs, expected);
+    }
+
+    #[test]
+    fn test_block_wrong_line_offset() {
+        let mut input = StringReader::new("_abba\n__toto");
+        let patterns = vec!["abba", "toto"];
+        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
+        let expected = vec![];
+        assert_eq!(diffs, expected);
+    }
+
+    #[test]
+    fn test_block_different_lengths() {
+        let mut input = StringReader::new("_who\n_abba");
+        let patterns = vec!["who", "abba"];
+        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
+        let expected = vec![
+            Diff {
+                pos: 1,
+                remove: 3,
+                add: "queen",
+            },
+            Diff {
+                pos: 6,
+                remove: 4,
+                add: "queen",
+            },
+        ];
+        assert_eq!(diffs, expected);
+    }
+
+    #[test]
+    fn test_block_two_matches() {
+        let mut input = StringReader::new("_who=+who\n_abba+abba");
+        let patterns = vec!["who", "abba"];
+        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
+        let expected = vec![
+            Diff {
+                pos: 1,
+                remove: 3,
+                add: "queen",
+            },
+            Diff {
+                pos: 6,
+                remove: 3,
+                add: "queen",
+            },
+            Diff {
+                pos: 11,
+                remove: 4,
+                add: "queen",
+            },
+            Diff {
+                pos: 16,
+                remove: 4,
+                add: "queen",
+            },
+        ];
+        assert_eq!(diffs, expected);
+    }
 }
