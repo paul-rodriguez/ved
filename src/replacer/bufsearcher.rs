@@ -6,8 +6,11 @@ use std::io::Read;
 /// The maximum number of bytes between the start and the end of match.
 pub const SEARCH_MAX: usize = 4096;
 
-/// Block patterns will be matched if they exist within the start of a line and this column.
-pub const COLUMN_MAX: usize = 120;
+/// Block patterns are guaranteed to match if they exist within the start of a line and this column.
+///
+/// However, depending on the chaotic refill mechanism, it is possible to get a match beyond this
+/// limit regardless.
+pub const COLUMN_MAX: usize = 1000;
 
 pub struct BufSearcher<'search, R>
 where
@@ -212,6 +215,7 @@ struct Match<'str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::iter;
     use stringreader::StringReader;
 
     #[test]
@@ -381,6 +385,30 @@ mod tests {
             },
             Diff {
                 pos: 21,
+                remove: 4,
+                add: "queen",
+            },
+        ];
+        assert_eq!(diffs, expected);
+    }
+
+    #[test]
+    fn test_block_max_context() {
+        let garbage_size = (SEARCH_MAX / 2) - 4;
+        let garbage: String = iter::repeat("X").take(garbage_size).collect();
+        let orig_content = String::new() + &garbage + "who\n" + &garbage + "abba";
+        let mut input = StringReader::new(&orig_content);
+        let patterns = vec!["who", "abba"];
+        let buf_searcher = BufSearcher::new(&patterns, "queen", &mut input);
+        let diffs: Vec<_> = buf_searcher.map(|x| x.unwrap()).collect();
+        let expected = vec![
+            Diff {
+                pos: garbage_size,
+                remove: 3,
+                add: "queen",
+            },
+            Diff {
+                pos: (garbage_size * 2) + 4,
                 remove: 4,
                 add: "queen",
             },
