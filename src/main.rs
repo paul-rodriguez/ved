@@ -18,7 +18,10 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
+    run(args)
+}
 
+fn run(args: Args) {
     let result = replacer::replace_single(&args.search, &args.replace, &Path::new(&args.path));
     match result {
         Ok(_) => {}
@@ -31,7 +34,36 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
-    fn test_main() {}
+    fn test_run() {
+        let dir = temp_dir();
+        let path = dir.path().join("file");
+        write_file(&path, "aaaaa");
+        run(Args {
+            search: "a".to_string(),
+            replace: "b".to_string(),
+            path: path.to_str().unwrap().to_owned(),
+        });
+        let content = file_content(&path);
+        assert_eq!(content, "bbbbb");
+    }
+
+    fn temp_dir() -> tempfile::TempDir {
+        let result = tempfile::tempdir();
+        assert!(result.is_ok());
+        result.unwrap()
+    }
+
+    fn file_content<P: AsRef<Path>>(path: P) -> String {
+        let result = fs::read_to_string(path);
+        assert!(result.is_ok());
+        result.unwrap()
+    }
+
+    fn write_file<P: AsRef<Path>>(path: P, content: &str) {
+        let result = fs::write(path, content);
+        assert!(result.is_ok());
+    }
 }
