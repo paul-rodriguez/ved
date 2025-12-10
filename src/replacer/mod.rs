@@ -6,35 +6,67 @@ mod error;
 use bufsearcher::BufSearcher;
 use diff::Diff;
 use error::{Error, Result};
+use glob;
+use par_map::{Map, ParMap};
 use rand::Rng;
 use std::fs;
 use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::thread;
+
+pub fn replace_glob<'search>(
+    patterns: &'search Vec<&'search str>,
+    replacements: &'search Vec<&'search str>,
+    file_glob: &'search str,
+) -> Result<Vec<Result<PathBuf>>> {
+    let paths = glob::glob(file_glob)?;
+
+    let results = thread::scope(|scope| {
+        let handles = paths.map(|glob_path| {
+            scope.spawn(|| {
+                let path = match glob_path {
+                    Ok(p) => p,
+                    Err(e) => return Err(e.into()),
+                };
+                if !path.as_path().is_dir() {
+                    match replace_path(patterns, replacements, &path) {
+                        Ok(_) => Ok(path),
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    Ok(path)
+                }
+            })
+        });
+        handles.map(|handle| handle.join()?).collect()
+    });
+    Ok(results)
+}
 
 // Search and replace a pattern in a file or recursively in a directory.
 //
 // For each file that must change, the result of the replacement is first
 // written into a temporary file and the original file is replaced by the
 // temporary file through a rename.
-pub fn replace<'search>(
+pub fn replace_path<'search, 'p>(
     patterns: &'search Vec<&'search str>,
     replacements: &'search Vec<&'search str>,
-    path: &Path,
-) -> Result<()> {
+    path: &'p Path,
+) -> Result<&'p Path> {
     if path.is_dir() {
-        for entry in fs::read_dir(path)? {
+        for entry in fs::read_dir(&path)? {
             let entry_path = entry?.path();
-            replace(patterns, replacements, &entry_path)?;
+            replace_path(patterns, replacements, entry_path.as_path())?;
         }
-        Ok(())
+        Ok(path)
     } else {
-        let mut input = File::open(path)?;
+        let mut input = File::open(&path)?;
         let diffs = BufSearcher::new(&patterns, &replacements, &mut input);
-        let temp_path = temporary_path(path)?;
+        let temp_path = temporary_path(&path)?;
         let mut temp_file = File::create_new(&temp_path)?;
-        let mut original = File::open(path)?;
+        let mut original = File::open(&path)?;
         {
             let mut replacer = Replacer::new(Box::new(diffs), &mut original, &mut temp_file);
             loop {
@@ -45,17 +77,22 @@ pub fn replace<'search>(
                 }
             }
         }
-        match fs::rename(temp_path, path) {
+        match fs::rename(temp_path, &path) {
             Err(e) => Err(Error::IoError(e)),
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(path),
         }
     }
 }
 
-pub fn replace_single(pattern: &str, replacement: &str, path: &Path) -> Result<()> {
+pub fn replace_single<'s, 'p>(
+    pattern: &'s str,
+    replacement: &'s str,
+    path: &'p Path,
+) -> Result<&'p Path> {
     let patterns = vec![pattern];
     let replacements = vec![replacement];
-    replace(&patterns, &replacements, path)
+    let result = replace_path(&patterns, &replacements, path);
+    return result;
 }
 
 fn temporary_path(original_path: &Path) -> Result<PathBuf> {

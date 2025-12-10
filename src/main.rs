@@ -1,6 +1,7 @@
 mod replacer;
 
 use clap::Parser;
+use glob;
 use std::path::Path;
 
 #[derive(Parser, Debug)]
@@ -23,6 +24,7 @@ fn main() {
 
 fn run(args: Args) {
     let result = replacer::replace_single(&args.search, &args.replace, &Path::new(&args.path));
+
     match result {
         Ok(_) => {}
         Err(e) => {
