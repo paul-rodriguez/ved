@@ -23,7 +23,7 @@ fn main() {
 }
 
 fn run(args: Args) {
-    let result = replacer::replace_single(&args.search, &args.replace, &Path::new(&args.path));
+    let result = replacer::replace_glob(&vec![&args.search], &vec![&args.replace], &args.path);
 
     match result {
         Ok(_) => {}

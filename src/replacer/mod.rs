@@ -285,6 +285,33 @@ mod tests {
         assert_eq!(content, "toto")
     }
 
+    #[test]
+    fn test_replace_glob() {
+        let dir = temp_dir();
+        let child_dir = dir.path().join("child");
+        assert!(fs::create_dir(&child_dir).is_ok());
+        let file1 = child_dir.join("file1");
+        write_file(&file1, "hello file1!");
+        let file2 = child_dir.join("file2");
+        write_file(&file2, "hello file2!");
+        let file3 = dir.path().join("file3");
+        write_file(&file3, "hello file3!");
+
+        let file_glob = dir.path().as_os_str().to_str().unwrap().to_owned() + "/**/*";
+        let paths: Vec<_> = glob::glob(&file_glob).unwrap().collect();
+        print!("{paths:?}");
+
+        let result = replace_glob(&vec!["hello"], &vec!["goodbye"], &file_glob);
+        assert!(result.is_ok());
+
+        let result1 = file_content(file1);
+        assert_eq!(result1, "goodbye file1!");
+        let result2 = file_content(file2);
+        assert_eq!(result2, "goodbye file2!");
+        let result3 = file_content(file3);
+        assert_eq!(result3, "goodbye file3!");
+    }
+
     fn temp_dir() -> tempfile::TempDir {
         let result = tempfile::tempdir();
         assert!(result.is_ok());
