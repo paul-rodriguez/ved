@@ -7,7 +7,6 @@ use bufsearcher::BufSearcher;
 use diff::Diff;
 use error::{Error, Result};
 use glob;
-use par_map::{Map, ParMap};
 use rand::Rng;
 use std::fs;
 use std::fs::File;
@@ -16,6 +15,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 
+// TODO change Vec to slice
 pub fn replace_glob<'search>(
     patterns: &'search Vec<&'search str>,
     replacements: &'search Vec<&'search str>,

@@ -1,7 +1,6 @@
 mod replacer;
 
 use clap::Parser;
-use glob;
 use std::path::Path;
 
 #[derive(Parser, Debug)]
