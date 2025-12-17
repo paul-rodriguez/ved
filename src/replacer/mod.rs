@@ -3,6 +3,7 @@ mod diff;
 mod diffheap;
 mod error;
 
+use crate::teereader;
 use bufsearcher::BufSearcher;
 use diff::Diff;
 use error::{Error, Result};
@@ -62,26 +63,37 @@ pub fn replace_path<'search, 'p>(
         }
         Ok(path)
     } else {
-        let mut input = File::open(&path)?;
-        let diffs = BufSearcher::new(&patterns, &replacements, &mut input);
+        let input = File::open(&path)?;
         let temp_path = temporary_path(&path)?;
-        let mut temp_file = File::create_new(&temp_path)?;
-        let mut original = File::open(&path)?;
-        {
-            let mut replacer = Replacer::new(Box::new(diffs), &mut original, &mut temp_file);
-            loop {
-                match replacer.replace_next_diff() {
-                    Err(Error::EndOfIteration) => break,
-                    Err(e) => return Err(e),
-                    Ok(()) => (),
-                }
-            }
-        }
+        let temp_file = File::create_new(&temp_path)?;
+        replace_stream(patterns, replacements, input, temp_file)?;
         match fs::rename(temp_path, &path) {
             Err(e) => Err(Error::IoError(e)),
             Ok(()) => Ok(path),
         }
     }
+}
+
+pub fn replace_stream<'s, R, W>(
+    patterns: &'s Vec<&'s str>,
+    replacements: &'s Vec<&'s str>,
+    input: R,
+    mut output: W,
+) -> Result<()>
+where
+    R: Read,
+    W: Write,
+{
+    let (mut input1, mut input2) = teereader::tee(input);
+    let diffs = BufSearcher::new(patterns, replacements, &mut input1);
+    let mut replacer = Replacer::new(Box::new(diffs), &mut input2, &mut output);
+    Ok(loop {
+        match replacer.replace_next_diff() {
+            Err(Error::EndOfIteration) => break,
+            Err(e) => return Err(e),
+            Ok(()) => (),
+        }
+    })
 }
 
 pub fn replace_single<'s, 'p>(
@@ -181,11 +193,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
     use super::*;
     use io::Cursor;
     use std::fs;
     use std::iter;
     use stringreader::StringReader;
+    use test::Bencher;
 
     #[test]
     fn test_replace_file_does_not_exist() {
@@ -310,6 +324,11 @@ mod tests {
         assert_eq!(result2, "goodbye file2!");
         let result3 = file_content(file3);
         assert_eq!(result3, "goodbye file3!");
+    }
+
+    #[bench]
+    fn bench_replacer(b: &mut Bencher) {
+        b.iter(|| {});
     }
 
     fn temp_dir() -> tempfile::TempDir {

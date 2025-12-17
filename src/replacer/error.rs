@@ -9,8 +9,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub enum Error {
     #[error("end of iteration")]
     EndOfIteration,
-    #[error("bad pattern: {0}")]
-    BadPattern(String),
     #[error("cannot handle path: {0}")]
     PathError(String),
     #[error("IO error: {0}")]
@@ -26,7 +24,7 @@ pub enum Error {
 }
 
 impl From<Box<dyn Any + Send + 'static>> for Error {
-    fn from(panic: Box<(dyn Any + Send + 'static)>) -> Self {
+    fn from(panic: Box<dyn Any + Send + 'static>) -> Self {
         if let Some(s) = panic.downcast_ref::<String>() {
             return Error::ThreadPanic(s.clone());
         }

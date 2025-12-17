@@ -1,4 +1,7 @@
+#![feature(test)]
+
 mod replacer;
+mod teereader;
 
 use clap::Parser;
 use std::path::Path;
