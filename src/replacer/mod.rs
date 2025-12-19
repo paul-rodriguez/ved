@@ -14,7 +14,9 @@ use std::fs::File;
 use std::io;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::thread;
+use std::time::{Duration, Instant};
 
 // TODO change Vec to slice
 pub fn replace_glob<'search>(
@@ -326,6 +328,60 @@ mod tests {
         assert_eq!(result2, "goodbye file2!");
         let result3 = file_content(file3);
         assert_eq!(result3, "goodbye file3!");
+    }
+
+    fn time_ed(file_ed: &Path) -> Duration {
+        let start = Instant::now();
+        let child = Command::new("sed")
+            .arg("-e")
+            .arg("s/X/Y/g")
+            .arg("-i")
+            .arg(file_ed.as_os_str().to_str().unwrap())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let output = child.wait_with_output().unwrap();
+        let duration = start.elapsed();
+        let err_str = String::from_utf8(output.stderr).unwrap();
+        println!("err_str: {err_str}");
+        assert!(output.status.success());
+        duration
+    }
+
+    fn time_ved(file_path: &Path) -> Duration {
+        let patterns = vec!["X"];
+        let replacements = vec!["Y"];
+        let start = Instant::now();
+        assert!(replace_path(&patterns, &replacements, file_path).is_ok());
+        start.elapsed()
+    }
+
+    #[test]
+    fn test_faster_than_ed_small() {
+        let dir = temp_dir();
+        let content: String = iter::repeat("X").take(100).collect();
+        let file_ved = dir.path().join("file_ved");
+        write_file(&file_ved, &content);
+        let file_ed = dir.path().join("file_ed");
+        write_file(&file_ed, &content);
+
+        let ved_time = time_ved(&file_ved);
+        let ed_time = time_ed(&file_ed);
+
+        println!("ed: {ed_time:#?}, ved: {ved_time:#?}");
+
+        let ved_result = file_content(file_ved);
+        let ed_result = file_content(file_ed);
+        let ved_len = ved_result.len();
+        let ed_len = ed_result.len();
+        println!("ed result: '{ed_result}'\nved result: '{ved_result}'");
+        println!("ed len: {ed_len}\nved len: {ved_len}");
+
+        assert!(ed_result == ved_result);
+        assert!(ed_time > ved_time);
     }
 
     #[bench]
