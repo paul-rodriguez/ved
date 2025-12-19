@@ -25,23 +25,25 @@ pub fn replace_glob<'search>(
     let paths = glob::glob(file_glob)?;
 
     let results = thread::scope(|scope| {
-        let handles = paths.map(|glob_path| {
-            scope.spawn(|| {
-                let path = match glob_path {
-                    Ok(p) => p,
-                    Err(e) => return Err(e.into()),
-                };
-                if !path.as_path().is_dir() {
-                    match replace_path(patterns, replacements, &path) {
-                        Ok(_) => Ok(path),
-                        Err(e) => Err(e),
+        let handles: Vec<_> = paths
+            .map(|glob_path| {
+                scope.spawn(|| {
+                    let path = match glob_path {
+                        Ok(p) => p,
+                        Err(e) => return Err(e.into()),
+                    };
+                    if !path.as_path().is_dir() {
+                        match replace_path(patterns, replacements, &path) {
+                            Ok(_) => Ok(path),
+                            Err(e) => Err(e),
+                        }
+                    } else {
+                        Ok(path)
                     }
-                } else {
-                    Ok(path)
-                }
+                })
             })
-        });
-        handles.map(|handle| handle.join()?).collect()
+            .collect();
+        handles.into_iter().map(|handle| handle.join()?).collect()
     });
     Ok(results)
 }
@@ -327,8 +329,72 @@ mod tests {
     }
 
     #[bench]
-    fn bench_replacer(b: &mut Bencher) {
-        b.iter(|| {});
+    fn bench_replacer_all_hits(b: &mut Bencher) {
+        let input_str: String = iter::repeat("X").take(10000).collect();
+        let patterns = vec!["X"];
+        let replacements = vec!["Y"];
+        b.iter(move || {
+            let input = StringReader::new(&input_str);
+            let output = Cursor::new(Vec::new());
+            replace_stream(&patterns, &replacements, input, output)
+        });
+    }
+
+    #[bench]
+    fn bench_replacer_no_hits(b: &mut Bencher) {
+        let input_str: String = iter::repeat("X").take(10000).collect();
+        let patterns = vec!["Y"];
+        let replacements = vec!["W"];
+        b.iter(move || {
+            let input = StringReader::new(&input_str);
+            let output = Cursor::new(Vec::new());
+            replace_stream(&patterns, &replacements, input, output)
+        });
+    }
+
+    fn parallel_bench(b: &mut Bencher, nb_files: usize) {
+        let patterns_x = vec!["X"];
+        let patterns_y = vec!["Y"];
+        let dir = temp_dir();
+        let content: String = iter::repeat("XH").take(1000).collect();
+        for i in 0..nb_files {
+            let file_path = dir.path().join(format!("file_{i}"));
+            write_file(&file_path, &content);
+            print!("Done with {i}");
+        }
+        let file_glob = dir.path().as_os_str().to_str().unwrap().to_owned() + "/**/*";
+
+        b.iter(
+            move || match replace_glob(&patterns_x, &patterns_y, &file_glob) {
+                Ok(_) => replace_glob(&patterns_y, &patterns_x, &file_glob),
+                Err(e) => Err(e),
+            },
+        );
+    }
+
+    #[bench]
+    fn bench_replacer_parallel_2(b: &mut Bencher) {
+        parallel_bench(b, 2);
+    }
+
+    #[bench]
+    fn bench_replacer_parallel_4(b: &mut Bencher) {
+        parallel_bench(b, 4);
+    }
+
+    #[bench]
+    fn bench_replacer_parallel_8(b: &mut Bencher) {
+        parallel_bench(b, 8);
+    }
+
+    #[bench]
+    fn bench_replacer_parallel_16(b: &mut Bencher) {
+        parallel_bench(b, 16);
+    }
+
+    #[bench]
+    fn bench_replacer_parallel_32(b: &mut Bencher) {
+        parallel_bench(b, 32);
     }
 
     fn temp_dir() -> tempfile::TempDir {
