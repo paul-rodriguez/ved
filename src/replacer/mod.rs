@@ -359,10 +359,14 @@ mod tests {
         start.elapsed()
     }
 
+    /// Tests whether ved is faster than ed on a small string.
+    ///
+    /// This test is biased in favor of ved because we waste time starting ed in a different
+    /// process whereas we just call a function to make ved do its job.
     #[test]
-    fn test_faster_than_ed_small() {
+    fn test_faster_than_ed_small_no_hits() {
         let dir = temp_dir();
-        let content: String = iter::repeat("X").take(100).collect();
+        let content: String = iter::repeat("A").take(100).collect();
         let file_ved = dir.path().join("file_ved");
         write_file(&file_ved, &content);
         let file_ed = dir.path().join("file_ed");
@@ -377,7 +381,6 @@ mod tests {
         let ed_result = file_content(file_ed);
         let ved_len = ved_result.len();
         let ed_len = ed_result.len();
-        println!("ed result: '{ed_result}'\nved result: '{ved_result}'");
         println!("ed len: {ed_len}\nved len: {ved_len}");
 
         assert!(ed_result == ved_result);
