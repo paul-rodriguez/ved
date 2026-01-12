@@ -1,12 +1,12 @@
 // This file was AI-generated originally, be careful
 
 use std::collections::VecDeque;
-use std::io::{self, Read};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex};
 
 /// Splits a single Reader into two independent Readers.
 /// Data read from the source is buffered until both readers have consumed it.
-pub fn tee<R: Read>(source: R) -> (impl Read, impl Read) {
+pub fn tee<R: Read>(source: R) -> (impl Read + Seek, impl Read + Seek) {
     let shared = Arc::new(Mutex::new(Shared {
         reader: source,
         buffer: VecDeque::new(),
@@ -97,6 +97,59 @@ impl<R: Read> Read for TeeReader<R> {
 
         self.cleanup(&mut state);
         Ok(n)
+    }
+}
+
+impl<R: Read> Seek for TeeReader<R> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
+        let mut state = self.shared.lock().unwrap();
+
+        match pos {
+            SeekFrom::Current(n) if n >= 0 => {
+                let mut remaining = n as usize;
+
+                // 1. Advance through the data we already have in the buffer
+                let my_pos = state.pos[self.id];
+                let buffer_len = state.buffer.len();
+                let relative_idx = my_pos - state.global_offset;
+
+                if relative_idx < buffer_len {
+                    let in_buffer = std::cmp::min(remaining, buffer_len - relative_idx);
+                    state.pos[self.id] += in_buffer;
+                    remaining -= in_buffer;
+                }
+
+                // 2. If we still need to seek forward, read from source and buffer it
+                if remaining > 0 {
+                    // We use a temporary stack buffer to perform the "skip"
+                    let mut skip_buf = [0u8; 8192];
+                    while remaining > 0 {
+                        let to_read = std::cmp::min(remaining, skip_buf.len());
+                        // Use the existing read logic to ensure data is buffered for the sibling
+                        // We call the Read implementation's logic directly via the shared state
+                        let n = state.reader.read(&mut skip_buf[..to_read])?;
+                        if n == 0 {
+                            break;
+                        } // EOF reached
+
+                        state.buffer.extend(&skip_buf[..n]);
+                        state.pos[self.id] += n;
+                        remaining -= n;
+                    }
+                }
+
+                self.cleanup(&mut state);
+                Ok(state.pos[self.id] as u64)
+            }
+            SeekFrom::Current(n) if n < 0 => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Backward seek is not supported by TeeReader",
+            )),
+            _ => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Only relative forward seek is supported by TeeReader",
+            )),
+        }
     }
 }
 

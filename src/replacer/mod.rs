@@ -12,7 +12,7 @@ use rand::Rng;
 use std::fs;
 use std::fs::File;
 use std::io;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
@@ -85,7 +85,7 @@ pub fn replace_stream<'s, R, W>(
     mut output: W,
 ) -> Result<()>
 where
-    R: Read,
+    R: Read + Seek,
     W: Write,
 {
     let (mut input1, mut input2) = teereader::tee(input);
@@ -128,7 +128,7 @@ fn temporary_path(original_path: &Path) -> Result<PathBuf> {
 
 struct Replacer<'search, 'iterator, R, W>
 where
-    R: Read,
+    R: Read + Seek,
     W: Write,
     'search: 'iterator,
 {
@@ -136,11 +136,13 @@ where
     original: &'search mut R,
     output: &'search mut W,
     pos: usize,
+    buffer: Vec<u8>,
+    max_buffer_size: usize,
 }
 
 impl<'search, 'iterator, R, W> Replacer<'search, 'iterator, R, W>
 where
-    R: Read,
+    R: Read + Seek,
     W: Write,
     'search: 'iterator,
 {
@@ -154,6 +156,8 @@ where
             original,
             output,
             pos: 0,
+            buffer: Vec::new(),
+            max_buffer_size: 16 * 1024 * 1024,
         }
     }
 
@@ -179,17 +183,26 @@ where
 
     fn produce_replacement(self: &mut Self, diff: Diff) -> Result<()> {
         // skip over the length of the pattern in the input
-        let mut buf = vec![0; diff.remove];
-        self.original.read_exact(buf.as_mut_slice())?;
+        self.original.seek_relative(diff.remove as i64)?;
         self.output.write_all(diff.add.as_bytes())?;
         self.pos += diff.remove;
         Ok(())
     }
 
     fn copy_from_original(self: &mut Self, nb_bytes: usize) -> Result<()> {
-        let mut buf = vec![0; nb_bytes];
-        self.original.read_exact(buf.as_mut_slice())?;
-        self.output.write_all(buf.as_slice())?;
+        let mut remaining = nb_bytes;
+        while remaining > 0 {
+            let chunk_size = std::cmp::min(remaining, self.max_buffer_size);
+            if self.buffer.len() < chunk_size {
+                self.buffer.resize(chunk_size, 0);
+            }
+            let slice = &mut self.buffer[..chunk_size];
+
+            self.original.read_exact(slice)?;
+            self.output.write_all(&self.buffer)?;
+            remaining -= chunk_size;
+        }
+
         self.pos += nb_bytes;
         Ok(())
     }
@@ -202,7 +215,6 @@ mod tests {
     use io::Cursor;
     use std::fs;
     use std::iter;
-    use stringreader::StringReader;
     use test::Bencher;
 
     #[test]
@@ -272,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_replacer_basic() {
-        let mut original = StringReader::new("abba");
+        let mut original = Cursor::new("abba");
         let mut output = Cursor::new(Vec::new());
         let diff = Diff {
             pos: 0,
@@ -366,7 +378,7 @@ mod tests {
     #[test]
     fn test_faster_than_ed_small_no_hits() {
         let dir = temp_dir();
-        let content: String = iter::repeat("A").take(100).collect();
+        let content: String = iter::repeat("A").take(1000).collect();
         let file_ved = dir.path().join("file_ved");
         write_file(&file_ved, &content);
         let file_ed = dir.path().join("file_ed");
@@ -393,7 +405,7 @@ mod tests {
         let patterns = vec!["X"];
         let replacements = vec!["Y"];
         b.iter(move || {
-            let input = StringReader::new(&input_str);
+            let input = Cursor::new(&input_str);
             let output = Cursor::new(Vec::new());
             replace_stream(&patterns, &replacements, input, output)
         });
@@ -405,7 +417,19 @@ mod tests {
         let patterns = vec!["Y"];
         let replacements = vec!["W"];
         b.iter(move || {
-            let input = StringReader::new(&input_str);
+            let input = Cursor::new(&input_str);
+            let output = Cursor::new(Vec::new());
+            replace_stream(&patterns, &replacements, input, output)
+        });
+    }
+
+    #[bench]
+    fn bench_replacer_1_in_2_hits_large(b: &mut Bencher) {
+        let input_str: String = iter::repeat("X_").take(10000000).collect();
+        let patterns = vec!["X"];
+        let replacements = vec!["W"];
+        b.iter(move || {
+            let input = Cursor::new(&input_str);
             let output = Cursor::new(Vec::new());
             replace_stream(&patterns, &replacements, input, output)
         });
