@@ -25,6 +25,7 @@ pub fn replace_glob<'search>(
     file_glob: &'search str,
 ) -> Result<Vec<Result<PathBuf>>> {
     let paths = glob::glob(file_glob)?;
+    println!("{paths:?}");
 
     let results = thread::scope(|scope| {
         let handles: Vec<_> = paths
