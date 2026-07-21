@@ -15,8 +15,8 @@ struct Args {
     #[arg(short, long)]
     replace: String,
 
-    #[arg(short, long, default_value = ".")]
-    path: String,
+    #[arg(default_value = ".")]
+    paths: Vec<String>,
 }
 
 fn main() {
@@ -25,11 +25,11 @@ fn main() {
 }
 
 fn run(args: Args) {
-    let result = replacer::replace_glob(&vec![&args.search], &vec![&args.replace], &args.path);
+    let paths: Vec<&str> = args.paths.iter().map(String::as_str).collect();
+    let results = replacer::replace_paths(&vec![&args.search], &vec![&args.replace], &paths);
 
-    match result {
-        Ok(_) => {}
-        Err(e) => {
+    for result in results {
+        if let Err(e) = result {
             println!("cannot replace: {}", e)
         }
     }
@@ -48,7 +48,7 @@ mod tests {
         run(Args {
             search: "a".to_string(),
             replace: "b".to_string(),
-            path: path.to_str().unwrap().to_owned(),
+            paths: vec![path.to_str().unwrap().to_owned()],
         });
         let content = file_content(&path);
         assert_eq!(content, "bbbbb");

@@ -26,29 +26,58 @@ pub fn replace_glob<'search>(
 ) -> Result<Vec<Result<PathBuf>>> {
     let paths = glob::glob(file_glob)?;
     println!("{paths:?}");
+    // glob's "**" patterns already enumerate directories *and* every file
+    // nested within them individually, so directories are filtered out here
+    // to avoid redundantly recursing into (and racing on) files that are
+    // also reached through their own glob entry.
+    let paths = paths.filter(|glob_path| !matches!(glob_path, Ok(p) if p.is_dir()));
+    Ok(replace_paths_impl(
+        patterns,
+        replacements,
+        paths.map(|p| p.map_err(Error::from)),
+    ))
+}
 
-    let results = thread::scope(|scope| {
+/// Search and replace a pattern across a fixed list of paths (files or
+/// directories), without any glob expansion — the caller (typically the
+/// shell) is responsible for expanding globs beforehand.
+pub fn replace_paths<'search>(
+    patterns: &'search Vec<&'search str>,
+    replacements: &'search Vec<&'search str>,
+    paths: &[&str],
+) -> Vec<Result<PathBuf>> {
+    replace_paths_impl(
+        patterns,
+        replacements,
+        paths.iter().map(|p| Ok(PathBuf::from(p))),
+    )
+}
+
+// Fan out a batch of paths across OS threads, replacing patterns in each via
+// replace_path (which recurses into directories itself), and collect one
+// Result per input path. Shared by replace_glob and replace_paths, which
+// only differ in how their path iterator is produced and can fail (glob
+// pattern errors vs. never).
+fn replace_paths_impl<'search, I>(
+    patterns: &'search Vec<&'search str>,
+    replacements: &'search Vec<&'search str>,
+    paths: I,
+) -> Vec<Result<PathBuf>>
+where
+    I: Iterator<Item = Result<PathBuf>>,
+{
+    thread::scope(|scope| {
         let handles: Vec<_> = paths
-            .map(|glob_path| {
+            .map(|path_result| {
                 scope.spawn(|| {
-                    let path = match glob_path {
-                        Ok(p) => p,
-                        Err(e) => return Err(e.into()),
-                    };
-                    if !path.as_path().is_dir() {
-                        match replace_path(patterns, replacements, &path) {
-                            Ok(_) => Ok(path),
-                            Err(e) => Err(e),
-                        }
-                    } else {
-                        Ok(path)
-                    }
+                    let path = path_result?;
+                    replace_path(patterns, replacements, &path)?;
+                    Ok(path)
                 })
             })
             .collect();
         handles.into_iter().map(|handle| handle.join()?).collect()
-    });
-    Ok(results)
+    })
 }
 
 // Search and replace a pattern in a file or recursively in a directory.
@@ -341,6 +370,29 @@ mod tests {
         assert_eq!(result2, "goodbye file2!");
         let result3 = file_content(file3);
         assert_eq!(result3, "goodbye file3!");
+    }
+
+    #[test]
+    fn test_replace_paths() {
+        let dir = temp_dir();
+        let child_dir = dir.path().join("child");
+        assert!(fs::create_dir(&child_dir).is_ok());
+        let file1 = child_dir.join("file1");
+        write_file(&file1, "hello file1!");
+        let file2 = dir.path().join("file2");
+        write_file(&file2, "hello file2!");
+
+        let child_dir_str = child_dir.as_os_str().to_str().unwrap();
+        let file2_str = file2.as_os_str().to_str().unwrap();
+        let paths = vec![child_dir_str, file2_str];
+
+        let results = replace_paths(&vec!["hello"], &vec!["goodbye"], &paths);
+        assert!(results.iter().all(|r| r.is_ok()));
+
+        let result1 = file_content(file1);
+        assert_eq!(result1, "goodbye file1!");
+        let result2 = file_content(file2);
+        assert_eq!(result2, "goodbye file2!");
     }
 
     fn time_ed(file_ed: &Path) -> Duration {
